@@ -182,6 +182,12 @@ Return the category metadatum as the type of the target."
     pyimp--vertico-selected
     pyimp--get-minibuffer-get-default-completion))
 
+(defvar pyimp-modules-minibuffer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-j") #'pyimp-describe-module)
+    map)
+  "Keymap for minibuffer commands in Python import modules.")
+
 (declare-function vertico--candidate "ext:vertico")
 (declare-function vertico--update "ext:vertico")
 
@@ -280,16 +286,24 @@ Remaining arguments ARGS are strings passed as command arguments to PROGRAM."
        (split-window-sensibly)
        wind))))
 
-(defun pyimp--describe-module (module)
+(defun pyimp-describe-module (module)
   "Describe the Python MODULE module in a new buffer.
 
 Argument MODULE is the name of the Python module to describe."
-  (interactive (list (if (active-minibuffer-window)
-                         (pcase-let
-                             ((`(,_category . ,current)
-                               (pyimp--minibuffer-get-current-candidate)))
-                           current)
-                       (pyimp--read-python-module))))
+  (interactive
+   (list
+    (if (active-minibuffer-window)
+        (pcase-let
+            ((`(,_category . ,current)
+              (pyimp--minibuffer-get-current-candidate)))
+          current)
+      (let* ((default-directory (or
+                                 (pyimp--locate-project-root)
+                                 default-directory)))
+        (pyimp--completing-read-with-preview "Module: "
+                                             (pyimp--get-modules)
+                                             nil
+                                             pyimp-modules-minibuffer-map)))))
   (require 'ansi-color)
   (let* ((mini-wind (minibuffer-selected-window))
          (buff-name (concat "*pyimp-help*"))
@@ -327,11 +341,6 @@ Argument MODULE is the name of the Python module to describe."
                (insert string)))))))
     proc))
 
-(defvar pyimp--modules-minibuffer-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-j") #'pyimp--describe-module)
-    map)
-  "Keymap for .")
 
 
 (defun pyimp--completing-read-with-preview (prompt collection &optional
@@ -366,7 +375,7 @@ INHERIT-INPUT-METHOD."
 
 
 (defun pyimp--get-modules ()
-  "Pyimp."
+  "Return a list of Python modules in the project."
   (let* ((project
           (or
            (pyimp--locate-project-root)
@@ -543,7 +552,7 @@ Argument SYMB is the symbol to import from the specified module."
            (pyimp--completing-read-with-preview "Module: "
                                                 (pyimp--get-modules)
                                                 nil
-                                                pyimp--modules-minibuffer-map))
+                                                pyimp-modules-minibuffer-map))
           (syms (append (list "*whole module*")
                         (pyimp--extract-symbols-from-module mod))))
      (list mod
