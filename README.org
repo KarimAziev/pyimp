@@ -1,0 +1,53 @@
+#+OPTIONS: ^:nil tags:nil num:nil
+
+* About
+
+Add import statements in Python.
+
+* Table of Contents                                       :TOC_2_gh:QUOTE:
+#+BEGIN_QUOTE
+- [[#about][About]]
+- [[#requirements][Requirements]]
+- [[#installation][Installation]]
+  - [[#with-use-package-and-straightel][With use-package and straight.el]]
+  - [[#manual-installation][Manual installation]]
+#+END_QUOTE
+
+* Requirements
+
+| Name    | Version |
+|---------+---------|
+| Emacs   |    29.1 |
+| treesit |         |
+| pyvenv  |         |
+
+
+
+* Installation
+
+** With use-package and straight.el
+#+begin_src elisp :eval no
+(use-package pyimp
+  :straight (pyimp
+             :repo "KarimAziev/pyimp"
+             :type git
+             :host github)
+  :bind ((:map pyimp--modules-minibuffer-map
+          ("C-j" . pyimp--describe-module)))
+  :commands (pyimp-import))
+#+end_src
+
+** Manual installation
+
+Download the source code and put it wherever you like, e.g. into =~/.emacs.d/pyimp/=
+
+#+begin_src shell :eval no
+git clone https://github.com/KarimAziev/pyimp.git ~/.emacs.d/pyimp/
+#+end_src
+
+Add the downloaded directory to the load path:
+
+#+begin_src elisp :eval no
+(add-to-list 'load-path "~/.emacs.d/pyimp/")
+(require 'pyimp)
+#+end_src
