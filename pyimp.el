@@ -111,7 +111,10 @@ Argument CODE is the Python code to be executed as a string."
                      cmd nil t nil
                      "-c" code)))
         (if (zerop status)
-            (car (read-from-string (buffer-string)))
+            (progn (goto-char (point-max))
+                   (skip-chars-backward "\s\t\n")
+                   (backward-sexp)
+                   (ignore-errors (read (current-buffer))))
           (message "Pyimp: An error occured: %s" (buffer-string))
           nil)))))
 
@@ -185,6 +188,7 @@ Return the category metadatum as the type of the target."
 (defvar pyimp-modules-minibuffer-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-j") #'pyimp-describe-module)
+    (define-key map (kbd "C-c C-o") #'pyimp-abort-minibuffer-and-describe-module)
     map)
   "Keymap for minibuffer commands in Python import modules.")
 
@@ -286,10 +290,38 @@ Remaining arguments ARGS are strings passed as command arguments to PROGRAM."
        (split-window-sensibly)
        wind))))
 
-(defun pyimp-describe-module (module)
-  "Describe the Python MODULE module in a new buffer.
+(defun pyimp-abort-minibuffer-and-describe-module (module)
+  "Abort the minibuffer and describe the specified Python module.
 
 Argument MODULE is the name of the Python module to describe."
+  (interactive
+   (list
+    (if (active-minibuffer-window)
+        (pcase-let
+            ((`(,_category . ,current)
+              (pyimp--minibuffer-get-current-candidate)))
+          current)
+      (let ((default-directory (or
+                                (pyimp--locate-project-root)
+                                default-directory)))
+        (pyimp--completing-read-with-preview "Module: "
+                                             (pyimp--get-modules)
+                                             nil
+                                             pyimp-modules-minibuffer-map)))))
+  (if-let ((wnd (active-minibuffer-window)))
+      (progn (select-window wnd)
+             (run-with-timer 0 nil #'pyimp-describe-module module t)
+             (abort-minibuffers))
+    (pyimp-describe-module module t)))
+
+
+(defun pyimp-describe-module (module &optional select)
+  "Display detailed information about a specified Python module.
+
+Argument MODULE is the name of the Python module to describe.
+
+Optional argument SELECT, if non-nil, selects the window displaying the MODULE
+description."
   (interactive
    (list
     (if (active-minibuffer-window)
@@ -313,7 +345,10 @@ Argument MODULE is the name of the Python module to describe."
                  (get-buffer-create buff-name)))
          (code (format pyimp--describe-module-code module module))
          (proc
-          (start-process buff-name buff "python" "-c" code)))
+          (let ((default-directory (or
+                                    (pyimp--locate-project-root)
+                                    default-directory)))
+            (start-process buff-name buff "python" "-c" code))))
     (with-current-buffer buff
       (let ((inhibit-read-only t))
         (erase-buffer)))
@@ -326,10 +361,13 @@ Argument MODULE is the name of the Python module to describe."
                         (eq mini-wind
                             (minibuffer-selected-window))))
            (with-current-buffer buff
-             (ansi-color-apply-on-region (point-min)
-                                         (point-max))
-             (with-selected-window (pyimp--get-other-wind)
-               (pop-to-buffer-same-window buff)))))))
+             (pyimp--fontify-module-help)
+             (goto-char (point-min))
+             (let ((wnd (pyimp--get-other-wind)))
+               (with-selected-window wnd
+                 (pop-to-buffer-same-window buff))
+               (when select
+                 (select-window wnd))))))))
     (set-process-filter
      proc
      (lambda (proc string)
@@ -341,13 +379,148 @@ Argument MODULE is the name of the Python module to describe."
                (insert string)))))))
     proc))
 
+(defvar Man-ansi-color-basic-faces-vector)
+(defvar browse-url-button-regexp)
+
+(defun pyimp--fontify-region (beg end)
+  "Fontify the region between BEG and END using Python mode.
+
+Argument BEG is the beginning position of the region to fontify.
+
+Argument END is the ending position of the region to fontify."
+  (let* ((str (buffer-substring beg end))
+         (fontified-str (with-temp-buffer
+                          (delay-mode-hooks
+                            (python-mode)
+                            (goto-char (point-min))
+                            (insert str)
+                            (font-lock-ensure)
+                            (buffer-string)))))
+    (goto-char beg)
+    (delete-region beg end)
+    (insert fontified-str)))
+
+(defun pyimp--fontify-module-help ()
+  "Convert overstriking and underlining to the correct fonts.
+Same for the ANSI bold and normal escape sequences."
+  (require 'man)
+  (require 'browse-url)
+  (goto-char (point-min))
+  (let ((ansi-color-apply-face-function #'ansi-color-apply-text-property-face)
+        (ansi-color-basic-faces-vector Man-ansi-color-basic-faces-vector))
+    (ansi-color-apply-on-region (point-min)
+                                (point-max)))
+  (let ((buffer-undo-list t))
+    (if (< (buffer-size)
+           (position-bytes (point-max)))
+        (progn
+          (goto-char (point-min))
+          (while (and (search-forward "__\b\b" nil t)
+                      (not (eobp)))
+            (delete-char -4)
+            (put-text-property (point)
+                               (1+ (point))
+                               'font-lock-face 'Man-underline))
+          (goto-char (point-min))
+          (while (search-forward "\b\b__" nil t)
+            (delete-char -4)
+            (put-text-property (1- (point))
+                               (point)
+                               'font-lock-face 'Man-underline))))
+    (goto-char (point-min))
+    (while (and (search-forward "_\b" nil t)
+                (not (eobp)))
+      (delete-char -2)
+      (put-text-property (point)
+                         (1+ (point)) 'font-lock-face 'Man-underline))
+    (goto-char (point-min))
+    (while (search-forward "\b_" nil t)
+      (delete-char -2)
+      (put-text-property (1- (point))
+                         (point) 'font-lock-face 'Man-underline))
+    (goto-char (point-min))
+    (while (re-search-forward "\\(.\\)\\(\b+\\1\\)+" nil t)
+      (replace-match "\\1")
+      (put-text-property (1- (point))
+                         (point) 'font-lock-face 'Man-overstrike))
+    (goto-char (point-min))
+    (while (re-search-forward "o\b\\+\\|\\+\bo" nil t)
+      (replace-match "o")
+      (put-text-property (1- (point))
+                         (point) 'font-lock-face 'bold))
+    (goto-char (point-min))
+    (while (re-search-forward "[-|]\\(\b[-|]\\)+" nil t)
+      (replace-match "+")
+      (put-text-property (1- (point))
+                         (point) 'font-lock-face 'bold))
+    (goto-char (point-min))
+    (while (re-search-forward ".\b" nil t)
+      (delete-char -2))
+    (goto-char (point-min))
+    (unless (string-prefix-p "latin-" current-language-environment t)
+      (goto-char (point-min))
+      (while (search-forward "­" nil t)
+        (replace-match "-")))
+    (goto-char (point-min))
+    (while (re-search-forward "^\\([[:upper:]][[:upper:]0-9 /-]+\\)$" nil t)
+      (put-text-property (match-beginning 0)
+                         (match-end 0)
+                         'font-lock-face 'Man-overstrike))
+    (goto-char (point-min))
+    (while (re-search-forward "^[\s\t]+\\(class\\|def\\)[\s]\\([a-z0-9_]+\\)"
+                              nil
+                              t)
+      (put-text-property (match-beginning 1)
+                         (match-end 1)
+                         'font-lock-face 'font-lock-keyword-face)
+      (put-text-property (match-beginning 2)
+                         (match-end 2)
+                         'font-lock-face 'font-lock-type-face))
+    (pcase-dolist
+        (`(,section . ,face)
+         '(("FUNCTIONS" . font-lock-function-name-face)
+           ("CLASSES" . font-lock-function-name-face)
+           ("DATA" . font-lock-function-name-face)))
+      (goto-char (point-min))
+      (when (re-search-forward (concat "^" (regexp-quote section) "\n") nil t)
+        (let ((end (save-excursion
+                     (re-search-forward "^\\([[:upper:]][[:upper:]0-9 /-]+\\)$"
+                                        nil t))))
+          (while (re-search-forward "^[\s|]+\\([a-z0-9_.]+\\)[\s]*[(=]" end t 1)
+            (put-text-property (match-beginning 1)
+                               (match-end 1)
+                               'font-lock-face face)))))
+    (goto-char (point-max))
+    (when (re-search-backward  "^FILE[\n][\s]+\\([^\n]+\\)" nil t
+                               1)
+      (let ((file (match-string-no-properties 1))
+            (beg (match-beginning 1))
+            (end (match-end 1)))
+        (buttonize-region beg end #'find-file-other-window file)))
+    (goto-char (point-max))
+    (while (re-search-backward browse-url-button-regexp nil t 1)
+      (let ((beg (match-beginning 0))
+            (end (match-end 0)))
+        (buttonize-region beg end #'browse-url (buffer-substring-no-properties
+                                                beg end))))
+    (font-lock-update)
+    (goto-char (point-max))
+    (while (re-search-backward "['`]\\([a-zA-Z_][a-zA-Z0-9_.]+\\)['`]" nil t 1)
+      (let ((beg (match-beginning 1))
+            (end (match-end 1)))
+        (if (string-match-p "self\\." (buffer-substring-no-properties beg end))
+            (pyimp--fontify-region beg end)
+          (put-text-property beg
+                             end
+                             'font-lock-face 'font-lock-type-face))))))
+
 
 
 (defun pyimp--completing-read-with-preview (prompt collection &optional
-                                             preview-action keymap
-                                             predicate require-match
-                                             initial-input hist def
-                                             inherit-input-method)
+                                                   preview-action keymap
+                                                   predicate require-match
+                                                   initial-input hist def
+                                                   inherit-input-method)
   "Read COLLECTION in minibuffer with PROMPT and KEYMAP.
 See `completing-read' for PREDICATE REQUIRE-MATCH INITIAL-INPUT HIST DEF
 INHERIT-INPUT-METHOD."
