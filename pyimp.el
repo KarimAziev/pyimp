@@ -6,7 +6,7 @@
 ;; URL: https://github.com/KarimAziev/pyimp
 ;; Version: 0.1.0
 ;; Keywords: languages
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "29.1") (pyvenv "1.21"))
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is NOT part of GNU Emacs.
@@ -701,9 +701,12 @@ Optional argument SYM is the specific symbol to import from the module."
            (message "Module %s already imported" module))
           (t
            (let ((names (cdr item)))
-             (if (member sym (mapcar 'treesit-node-text names))
+             (if (member sym (mapcar #'treesit-node-text names))
                  (message "%s already imported" sym)
                (let ((last-node (car (last names))))
+                 (when (equal (treesit-node-type last-node) ")")
+                   (let ((dropped (butlast names 1)))
+                     (setq last-node (car (last dropped)))))
                  (goto-char (treesit-node-end last-node))
                  (if (equal  ","
                              (treesit-node-text last-node))
