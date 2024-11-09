@@ -80,7 +80,7 @@ Argument FILE is the path to the file whose modification time is needed."
   (let ((dir default-directory)
         (res))
     (while
-        (when-let ((last-dir (locate-dominating-file dir
+        (when-let* ((last-dir (locate-dominating-file dir
                                                      "__init__.py")))
           (setq res dir))
       (setq dir (file-name-parent-directory dir)))
@@ -209,7 +209,7 @@ Return the category metadatum as the type of the target."
     (run-hook-wrapped
      'pyimp--minibuffer-targets-finders
      (lambda (fun)
-       (when-let ((result (funcall fun)))
+       (when-let* ((result (funcall fun)))
          (when (and (cdr-safe result)
                     (stringp (cdr-safe result))
                     (not (string-empty-p (cdr-safe result))))
@@ -265,7 +265,7 @@ Remaining arguments ARGS are strings passed as command arguments to PROGRAM."
     (set-process-filter
      proc
      (lambda (proc string)
-       (when-let ((buf (process-buffer proc)))
+       (when-let* ((buf (process-buffer proc)))
          (with-current-buffer buf
            (let ((inhibit-read-only t))
              (save-excursion
@@ -308,7 +308,7 @@ Argument MODULE is the name of the Python module to describe."
                                              (pyimp--get-modules)
                                              nil
                                              pyimp-modules-minibuffer-map)))))
-  (if-let ((wnd (active-minibuffer-window)))
+  (if-let* ((wnd (active-minibuffer-window)))
       (progn (select-window wnd)
              (run-with-timer 0 nil #'pyimp-describe-module module t)
              (abort-minibuffers))
@@ -371,7 +371,7 @@ description."
     (set-process-filter
      proc
      (lambda (proc string)
-       (when-let ((buf (process-buffer proc)))
+       (when-let* ((buf (process-buffer proc)))
          (with-current-buffer buf
            (let ((inhibit-read-only t))
              (save-excursion
