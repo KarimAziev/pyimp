@@ -2,7 +2,17 @@
 
 * About
 
-Add import statements in Python.
+=pyimp= is an Emacs library that helps you insert Python import statements.
+
+*Why*
+
+While many LSP servers assume you’re typing a symbol and then rely on auto-import completions, they may fall short in scenarios where:
+
+- The desired symbol isn’t immediately suggested.
+- You’re pasting code or otherwise not triggering completions.
+- You remember the module but not the symbol name.
+
+=pyimp= fills this gap by giving you precise control over import statements. This tool can work alongside your LSP server or serve as a standalone solution for handling Python imports in Emacs.
 
 * Table of Contents                                       :TOC_2_gh:QUOTE:
 #+BEGIN_QUOTE
@@ -11,16 +21,16 @@ Add import statements in Python.
 - [[#installation][Installation]]
   - [[#with-use-package-and-straightel][With use-package and straight.el]]
   - [[#manual-installation][Manual installation]]
+- [[#usage][Usage]]
+- [[#configuration-and-customization][Configuration and Customization]]
 #+END_QUOTE
 
 * Requirements
 
-| Name    | Version |
-|---------+---------|
-| Emacs   |    29.1 |
-| treesit |         |
-| pyvenv  |         |
-
+| Name                         | Version |
+|------------------------------+---------|
+| Emacs with =treesit= supoort |    29.1 |
+| pyvenv                       |    1.21 |
 
 
 * Installation
@@ -31,9 +41,11 @@ Add import statements in Python.
   :straight (pyimp
              :repo "KarimAziev/pyimp"
              :type git
-             :host github)
-  :bind ((:map pyimp--modules-minibuffer-map
-          ("C-j" . pyimp--describe-module)))
+             :host github
+             :flavor nil)
+  :bind ((:map pyimp-modules-minibuffer-map
+          ("C-j" . pyimp-describe-module)
+          ("C-c C-o" . pyimp-abort-minibuffer-and-describe-module)))
   :commands (pyimp-import))
 #+end_src
 
@@ -51,3 +63,41 @@ Add the downloaded directory to the load path:
 (add-to-list 'load-path "~/.emacs.d/pyimp/")
 (require 'pyimp)
 #+end_src
+* Usage
+
+Invoke the command =pyimp-import= (for example via =M-x= or a bound key) to insert an import statement. The process works as follows:
+
+1. You will be prompted for a Python module. pyimp searches your project, installed libraries, and built-in modules.
+2. After selecting a module, pyimp presents a list of exported symbols from the module. You can choose a single symbol or mark multiple symbols (if you enable minibuffer marking).
+3. Once selected, pyimp automatically inserts or updates the appropriate import statement in your Python file.
+
+If you ever need to read module documentation or review what's been imported, you can use the provided module description functionality (bound under =C-j= by default).
+
+* Configuration and Customization
+
+=pyimp= provides several customizable variables. For instance:
+
+-  =pyimp-files-sorting-threshold=
+   Sets the threshold (in number of files) that determines whether project files should be sorted.
+   (Set to nil to always sort.)
+
+-  =pyimp-allow-minibuffer-marking=
+   If enabled, lets you mark multiple symbols in the minibuffer for import. If enabled, you may want to customize =pyimp-multiple-symbols-minibuffer-map=:
+
+#+begin_src elisp
+(use-package pyimp
+  :straight (pyimp
+             :repo "KarimAziev/pyimp"
+             :type git
+             :host github
+             :flavor nil)
+  :bind ((:map pyimp-multiple-symbols-minibuffer-map
+          ("RET" . pyimp-minibuffer-done)
+          ("C-SPC" . pyimp-minibuffer-mark)
+          ("C-<return>" . pyimp-minibuffer-done)
+          ("C-M-j" . pyimp-minibuffer-done)))
+  :commands (pyimp-import))
+#+end_src
+
+-  =pyimp-extract-module-export-functions=
+   A hook variable that specifies functions used to extract exported symbols from a module.
