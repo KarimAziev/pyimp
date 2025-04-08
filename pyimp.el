@@ -4,7 +4,7 @@
 
 ;; Author: Karim Aziiev <karim.aziiev@gmail.com>
 ;; URL: https://github.com/KarimAziev/pyimp
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Keywords: languages
 ;; Package-Requires: ((emacs "29.1") (pyvenv "1.21"))
 ;; SPDX-License-Identifier: GPL-3.0-or-later
