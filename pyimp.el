@@ -807,11 +807,14 @@ directory scan."
 (defun pyimp--get-python-libs ()
   "Retrieve Python library directories containing `site-packages'."
   (when-let* ((ppath (executable-find "python3"))
-              (dirs (directory-files
-                     (expand-file-name "lib"
-                                       (file-name-parent-directory
-                                        (file-name-parent-directory ppath)))
-                     t directory-files-no-dot-files-regexp)))
+              (lib-parent-dir (expand-file-name "lib"
+                                                (file-name-parent-directory
+                                                 (file-name-parent-directory
+                                                  ppath))))
+              (dirs (and (file-exists-p lib-parent-dir)
+                         (directory-files
+                          lib-parent-dir
+                          t directory-files-no-dot-files-regexp))))
     (let ((result))
       (dolist (dir dirs)
         (let ((site-packages-dir (expand-file-name "site-packages" dir)))
