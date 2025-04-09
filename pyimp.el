@@ -117,6 +117,14 @@ print(help(%s))
 "
   "Script to describe Python module.")
 
+(defconst pyimp--describe-module-symbol-code "\
+from %s import %s
+
+print(help(%s))
+"
+  "Script to describe Python module's symbol.")
+
+
 (defconst pyimp--module-symbols-script "
 import %s
 
@@ -137,6 +145,10 @@ if spec is not None:
     print(spec.origin)
 "
   "String containing Python code to find a module's file path.")
+
+(defvar pyimp-whole-module-indicator "*whole module*")
+
+(defvar-local pyimp--current-module-to-import nil)
 
 
 (defun pyimp--file-modification-time (file)
@@ -287,10 +299,16 @@ Return the category metadatum as the type of the target."
 
 (defvar pyimp-modules-minibuffer-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-j") #'pyimp-describe-module)
+    (define-key map (kbd "C-j") #'pyimp-show-python-help)
     (define-key map (kbd "C-c C-o") #'pyimp-abort-minibuffer-and-describe-module)
     map)
   "Keymap for minibuffer commands in Python import modules.")
+
+(defvar pyimp-symbols-minibuffer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-j") #'pyimp-show-python-help)
+    (define-key map (kbd "C-c C-o") #'pyimp-abort-minibuffer-and-describe-symbol)
+    map))
 
 (defvar pyimp-multiple-symbols-minibuffer-map
   (let ((map (make-sparse-keymap)))
@@ -418,32 +436,69 @@ Argument MODULE is the name of the Python module to describe."
                                              pyimp-modules-minibuffer-map)))))
   (if-let* ((wnd (active-minibuffer-window)))
       (progn (select-window wnd)
-             (run-with-timer 0 nil #'pyimp-describe-module module t)
+             (run-with-timer 0 nil #'pyimp-show-python-help module module t)
              (abort-minibuffers))
-    (pyimp-describe-module module t)))
+    (pyimp-show-python-help module module t)))
 
+(defun pyimp-abort-minibuffer-and-describe-symbol (module symbol)
+  "Abort the minibuffer and display Python help for a symbol.
 
-(defun pyimp-describe-module (module &optional select)
-  "Display detailed information about a specified Python module.
+Argument MODULE is the name of the Python module for which help is requested.
 
-Argument MODULE is the name of the Python module to describe.
-
-Optional argument SELECT, if non-nil, selects the window displaying the MODULE
-description."
+Argument SYMBOL is the specific symbol within the MODULE for which help is
+requested."
   (interactive
-   (list
-    (if (active-minibuffer-window)
-        (pcase-let
-            ((`(,_category . ,current)
-              (pyimp--minibuffer-get-current-candidate)))
-          current)
-      (let* ((default-directory (or
-                                 (pyimp--locate-project-root)
-                                 default-directory)))
-        (pyimp--completing-read-with-preview "Module: "
-                                             (pyimp--get-modules)
-                                             nil
-                                             pyimp-modules-minibuffer-map)))))
+   (pyimp--module-and-symbol-for-help))
+  (if-let* ((wnd (active-minibuffer-window)))
+      (progn (select-window wnd)
+             (run-with-timer 0 nil #'pyimp-show-python-help module symbol t)
+             (abort-minibuffers))
+    (pyimp-show-python-help module symbol t)))
+
+(defun pyimp--module-and-symbol-for-help ()
+  "Return a list containing a module and a symbol for displaying the help."
+  (let* ((module
+          (if (active-minibuffer-window)
+              (or pyimp--current-module-to-import
+                  (pcase-let
+                      ((`(,_category . ,current)
+                        (pyimp--minibuffer-get-current-candidate)))
+                    current))
+            (let* ((default-directory (or
+                                       (pyimp--locate-project-root)
+                                       default-directory)))
+              (pyimp--completing-read-with-preview "Module: "
+                                                   (pyimp--get-modules)
+                                                   nil
+                                                   pyimp-modules-minibuffer-map))))
+         (symbol
+          (if (active-minibuffer-window)
+              (pcase-let
+                  ((`(,_category . ,current)
+                    (pyimp--minibuffer-get-current-candidate)))
+                current)
+            (let ((default-directory (or
+                                      (pyimp--locate-project-root)
+                                      default-directory)))
+              (pyimp--read-symb module)))))
+    (list module (if (equal symbol pyimp-whole-module-indicator)
+                     module
+                   symbol))))
+
+
+(defun pyimp-show-python-help (module symbol &optional select)
+  "Display Python help for a specified MODULE or SYMBOL in a buffer.
+
+Argument MODULE is the name of the Python module for which help is requested.
+
+Argument SYMBOL is the specific symbol within the MODULE for which help is
+requested. If it is the same as MODULE, or as `pyimp-whole-module-indicator',
+show documentation for the whole module.
+
+Optional argument SELECT, when non-nil, selects the window displaying the help
+buffer."
+  (interactive
+   (pyimp--module-and-symbol-for-help))
   (require 'ansi-color)
   (let* ((mini-wind (minibuffer-selected-window))
          (buff-name (concat "*pyimp-help*"))
@@ -451,7 +506,10 @@ description."
                  (when (get-buffer buff-name)
                    (kill-buffer buff-name))
                  (get-buffer-create buff-name)))
-         (code (format pyimp--describe-module-code module module))
+         (code
+          (if (equal module symbol)
+              (format pyimp--describe-module-code module symbol)
+            (format pyimp--describe-module-symbol-code module symbol symbol)))
          (proc
           (let ((default-directory (or
                                     (pyimp--locate-project-root)
@@ -488,6 +546,8 @@ description."
                (goto-char (point-max))
                (insert string)))))))
     proc))
+
+(defalias 'pyimp-describe-module #'pyimp-show-python-help)
 
 (defvar Man-ansi-color-basic-faces-vector)
 (defvar browse-url-button-regexp)
@@ -577,7 +637,7 @@ Same for the ANSI bold and normal escape sequences."
                          (match-end 0)
                          'font-lock-face 'Man-overstrike))
     (goto-char (point-min))
-    (while (re-search-forward "^[\s\t]+\\(class\\|def\\)[\s]\\([a-z0-9_]+\\)"
+    (while (re-search-forward "^[\s\t]*\\(class\\|def\\)[\s]\\([a-z0-9_]+\\)"
                               nil
                               t)
       (put-text-property (match-beginning 1)
@@ -622,7 +682,42 @@ Same for the ANSI bold and normal escape sequences."
             (pyimp--fontify-region beg end)
           (put-text-property beg
                              end
-                             'font-lock-face 'font-lock-type-face))))))
+                             'font-lock-face 'font-lock-type-face))))
+    (goto-char (point-min))
+    (while
+        (re-search-forward
+         "^[\s]*|[\s][\s]\\(\\([_a-z][_a-z0-9]+\\)[^\n]*\\)[\n][\s]|[\s][\s][\s][\s]"
+         nil t 1)
+      (let* ((beg (match-beginning 1))
+             (end (match-end 1))
+             (beg-name (match-beginning 2))
+             (end-name (match-end 2)))
+        (pyimp--fontify-region beg
+                               end)
+        (put-text-property beg-name
+                           end-name
+                           'font-lock-face 'font-lock-function-name-face)))
+    (goto-char (point-min))
+    (while (re-search-forward "^\\([a-z_][a-z0-9_]+\\)([^\n]+" nil t 1)
+      (let* ((beg (match-beginning 0))
+             (end (match-end 0))
+             (beg-name (match-beginning 1))
+             (end-name (match-end 1)))
+        (pyimp--fontify-region beg
+                               end)
+        (put-text-property beg-name
+                           end-name
+                           'font-lock-face 'font-lock-function-name-face)))
+    (goto-char (point-min))
+    (while (re-search-forward
+            "\\(^[\s]*|[\s]*\\(Methods defined here:\\)\\|^[\s]*|[\s]*----------------------------------------------------------------------[\n][\s]*|[\s]+\\([a-z][^\n]+\\)\\)"
+            nil t 1)
+      (put-text-property
+       (or (match-beginning 3)
+           (match-beginning 2))
+       (or (match-end 3)
+           (match-end 2))
+       'font-lock-face 'font-lock-keyword-face))))
 
 
 
@@ -1143,6 +1238,19 @@ Result is alist of (MODULE . nil)."
   (interactive)
   (throw 'done (cdr (pyimp--minibuffer-get-current-candidate))))
 
+(defun pyimp--make-annotfmt (completions)
+  "Create a formatted string with aligned space for completions.
+
+Argument COMPLETIONS is a list of strings representing possible completions."
+  (concat
+   (propertize " " 'display
+               `(space :align-to ,(1+
+                                   (apply #'max
+                                    (or
+                                     (mapcar #'length completions)
+                                     (list 40))))))
+   " %s"))
+
 (defun pyimp--read-symb (module)
   "Prompt the user to select a symbol to import from a specified module.
 
@@ -1153,27 +1261,26 @@ imported."
         (pyimp--imported-nodes-in-module module))
        (imports-from (pyimp--extract-import-from-statements))
        (imported-syms (cdr (assoc-string module imports-from)))
-       (syms (append (list "*whole module*")
+       (syms (append (list pyimp-whole-module-indicator)
                      (pyimp-extract-exports-from-module module)))
-       (longest (apply #'max (or (mapcar #'length syms)
-                                 (list 1))))
-       (annotfmt (concat
-                  (propertize " " 'display
-                              `(space :align-to ,(1+
-                                                  longest)))
-                  " %s"))
+       (annotfmt (pyimp--make-annotfmt syms))
        (annotf
         (pyimp--make-symbols-annotation-fn annotfmt
                                            imported-syms
                                            reimported-aliased
                                            reimports
                                            reimported-syms)))
-    (completing-read (format "Import symbol from %s: " module)
-                     (lambda (str pred action)
-                       (if (eq action 'metadata)
-                           `(metadata
-                             (annotation-function . ,annotf))
-                         (complete-with-action action syms str pred))))))
+    (unwind-protect
+        (minibuffer-with-setup-hook
+            (lambda ()
+              (setq pyimp--current-module-to-import module))
+          (completing-read (format "Import symbol from %s: " module)
+                           (lambda (str pred action)
+                             (if (eq action 'metadata)
+                                 `(metadata
+                                   (annotation-function . ,annotf))
+                               (complete-with-action action syms str pred)))))
+      (setq pyimp--current-module-to-import nil))))
 
 (defun pyimp--make-symbols-annotation-fn (annotfmt imported-syms
                                                    reimported-aliased reimports
@@ -1233,89 +1340,87 @@ Optional argument MARKED-SYMS is a list of symbols marked for import."
                                reimport-capture))
                         " ")))))
 
+(defun pyimp--help-string-for-mark-command ()
+  "Format a help string indicating how to import multiple symbols."
+  (let* ((key (where-is-internal
+               #'pyimp-minibuffer-mark
+               pyimp-multiple-symbols-minibuffer-map
+               t
+               t
+               t))
+         (key-descr (if key (key-description key) "M-x pyimp-minibuffer-mark")))
+    (format " (to import multiple symbols use %s) " key-descr)))
+
 (defun pyimp--read-multiple-syms (module)
   "Prompt user to select symbols to import from a MODULE, with completion.
 
 Argument MODULE is the name of the module from which to import symbols."
   (pcase-let* ((`(,reimported-syms ,reimported-aliased ,reimports)
                 (pyimp--imported-nodes-in-module module))
-               (whole-mod-str "*whole module*")
+               (whole-mod-str pyimp-whole-module-indicator)
                (choices (append (list whole-mod-str)
                                 (pyimp-extract-exports-from-module module)))
                (prompt (format "Import symbol from %s: " module))
                (imports-from (pyimp--extract-import-from-statements))
                (imported-syms (cdr (assoc-string module imports-from)))
-               (longest (apply #'max (or (mapcar #'length choices)
-                                         (list 1))))
-               (annotfmt (concat
-                          (propertize " " 'display
-                                      `(space :align-to ,(1+
-                                                          longest)))
-                          "%s"))
+               (annotfmt (pyimp--make-annotfmt choices))
+               (helpstr (pyimp--help-string-for-mark-command))
                (marked-syms)
-               (helpstr)
-               (key)
-               (key-descr)
                (result))
-    (setq key (where-is-internal
-               #'pyimp-minibuffer-mark
-               pyimp-multiple-symbols-minibuffer-map
-               t
-               t
-               t))
-    (setq key-descr (if key (key-description key)
-                      "M-x pyimp-minibuffer-mark"))
-    (setq helpstr (format " (to import multiple symbols use %s) " key-descr))
     (setq result
           (catch 'done (while
                            (let ((curr
                                   (catch 'action
-                                    (minibuffer-with-setup-hook
-                                        (lambda ()
-                                          (let ((map
-                                                 (make-composed-keymap
-                                                  pyimp-multiple-symbols-minibuffer-map
-                                                  (current-local-map))))
-                                            (use-local-map
-                                             map)))
-                                      (let* ((composed-prompt
-                                              (concat prompt
-                                                      (if
-                                                          (string-suffix-p " "
-                                                                           prompt)
-                                                          (string-trim-left
-                                                           helpstr)
-                                                        helpstr)
-                                                      (if marked-syms
-                                                          (format
-                                                           "(%d marked)"
-                                                           (length
-                                                            marked-syms))
-                                                        "")
-                                                      " "))
-                                             (annotf
-                                              (pyimp--make-symbols-annotation-fn annotfmt
-                                                                                 imported-syms
-                                                                                 reimported-aliased
-                                                                                 reimports
-                                                                                 reimported-syms
-                                                                                 marked-syms)))
-                                        (if marked-syms
-                                            (setq choices (remove whole-mod-str choices))
-                                          (unless (member whole-mod-str choices)
-                                            (setq choices (push whole-mod-str choices))))
-                                        (completing-read composed-prompt
-                                                         (lambda
-                                                           (str pred action)
-                                                           (if (eq action
-                                                                   'metadata)
-                                                               `(metadata
-                                                                 (annotation-function
-                                                                  . ,annotf))
-                                                             (complete-with-action
-                                                              action choices
-                                                              str
-                                                              pred)))))))))
+                                    (unwind-protect
+                                        (minibuffer-with-setup-hook
+                                            (lambda ()
+                                              (let ((map
+                                                     (make-composed-keymap
+                                                      (list pyimp-multiple-symbols-minibuffer-map
+                                                            pyimp-symbols-minibuffer-map)
+                                                      (current-local-map))))
+                                                (use-local-map
+                                                 map))
+                                              (setq pyimp--current-module-to-import module))
+                                          (let* ((composed-prompt
+                                                  (concat prompt
+                                                          (if
+                                                              (string-suffix-p " "
+                                                                               prompt)
+                                                              (string-trim-left
+                                                               helpstr)
+                                                            helpstr)
+                                                          (if marked-syms
+                                                              (format
+                                                               "(%d marked)"
+                                                               (length
+                                                                marked-syms))
+                                                            "")
+                                                          " "))
+                                                 (annotf
+                                                  (pyimp--make-symbols-annotation-fn annotfmt
+                                                                                     imported-syms
+                                                                                     reimported-aliased
+                                                                                     reimports
+                                                                                     reimported-syms
+                                                                                     marked-syms)))
+                                            (if marked-syms
+                                                (setq choices (remove whole-mod-str choices))
+                                              (unless (member whole-mod-str choices)
+                                                (setq choices (push whole-mod-str choices))))
+                                            (completing-read composed-prompt
+                                                             (lambda
+                                                               (str pred action)
+                                                               (if (eq action
+                                                                       'metadata)
+                                                                   `(metadata
+                                                                     (annotation-function
+                                                                      . ,annotf))
+                                                                 (complete-with-action
+                                                                  action choices
+                                                                  str
+                                                                  pred))))))
+                                      (setq pyimp--current-module-to-import nil)))))
                              (pcase (car-safe curr)
                                ('mark
                                 (when-let* ((sym (cdr curr)))
@@ -1454,7 +1559,7 @@ Argument SYMB is the symbol or list of symbols to import from the module."
     (dolist (sym symb)
       (pyimp--insert-import
        module
-       (unless (equal sym "*whole module*")
+       (unless (equal sym pyimp-whole-module-indicator)
          sym)))))
 
 (provide 'pyimp)
