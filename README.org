@@ -29,7 +29,7 @@ While many LSP servers assume you’re typing a symbol and then rely on auto-imp
 
 | Name                         | Version |
 |------------------------------+---------|
-| Emacs with =treesit= supoort |    29.1 |
+| Emacs with =treesit= support |    29.1 |
 | pyvenv                       |    1.21 |
 
 
