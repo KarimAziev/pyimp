@@ -458,6 +458,7 @@ description."
                                     default-directory)))
             (start-process buff-name buff "python" "-c" code))))
     (with-current-buffer buff
+      (special-mode)
       (let ((inhibit-read-only t))
         (erase-buffer)))
     (set-process-sentinel
@@ -469,13 +470,14 @@ description."
                         (eq mini-wind
                             (minibuffer-selected-window))))
            (with-current-buffer buff
-             (pyimp--fontify-module-help)
-             (goto-char (point-min))
-             (let ((wnd (pyimp--get-other-wind)))
-               (with-selected-window wnd
-                 (pop-to-buffer-same-window buff))
-               (when select
-                 (select-window wnd))))))))
+             (let ((inhibit-read-only t))
+               (pyimp--fontify-module-help)
+               (goto-char (point-min))
+               (let ((wnd (pyimp--get-other-wind)))
+                 (with-selected-window wnd
+                   (pop-to-buffer-same-window buff))
+                 (when select
+                   (select-window wnd)))))))))
     (set-process-filter
      proc
      (lambda (proc string)
