@@ -684,19 +684,29 @@ Same for the ANSI bold and normal escape sequences."
                              end
                              'font-lock-face 'font-lock-type-face))))
     (goto-char (point-min))
-    (while
-        (re-search-forward
-         "^[\s]*|[\s][\s]\\(\\([_a-z][_a-z0-9]+\\)[^\n]*\\)[\n][\s]|[\s][\s][\s][\s]"
-         nil t 1)
-      (let* ((beg (match-beginning 1))
-             (end (match-end 1))
-             (beg-name (match-beginning 2))
-             (end-name (match-end 2)))
-        (pyimp--fontify-region beg
-                               end)
-        (put-text-property beg-name
-                           end-name
-                           'font-lock-face 'font-lock-function-name-face)))
+    (let ((re (rx (seq bol
+                       (zero-or-more " ")
+                       "|  "
+                       (group
+                        (group
+                         (any "a-z" "_")
+                         (one-or-more
+                          (any "0-9a-z" "_")))
+                        (zero-or-more nonl))
+                       "\n |    "))))
+      (while
+          (re-search-forward
+           re
+           nil t 1)
+        (let* ((beg (match-beginning 1))
+               (end (match-end 1))
+               (beg-name (match-beginning 2))
+               (end-name (match-end 2)))
+          (pyimp--fontify-region beg
+                                 end)
+          (put-text-property beg-name
+                             end-name
+                             'font-lock-face 'font-lock-function-name-face))))
     (goto-char (point-min))
     (while (re-search-forward "^\\([a-z_][a-z0-9_]+\\)([^\n]+" nil t 1)
       (let* ((beg (match-beginning 0))
@@ -709,15 +719,32 @@ Same for the ANSI bold and normal escape sequences."
                            end-name
                            'font-lock-face 'font-lock-function-name-face)))
     (goto-char (point-min))
-    (while (re-search-forward
-            "\\(^[\s]*|[\s]*\\(Methods defined here:\\)\\|^[\s]*|[\s]*----------------------------------------------------------------------[\n][\s]*|[\s]+\\([a-z][^\n]+\\)\\)"
-            nil t 1)
-      (put-text-property
-       (or (match-beginning 3)
-           (match-beginning 2))
-       (or (match-end 3)
-           (match-end 2))
-       'font-lock-face 'font-lock-keyword-face))))
+    (let ((re (rx (group
+                   (or (seq bol
+                            (zero-or-more " ")
+                            "|"
+                            (zero-or-more " ")
+                            (group "Methods defined here:"))
+                       (seq bol
+                            (zero-or-more " ")
+                            "|"
+                            (zero-or-more " ")
+                            "----------------------------------------------------------------------\n"
+                            (zero-or-more " ")
+                            "|"
+                            (one-or-more " ")
+                            (group
+                             (any "a-z")
+                             (one-or-more nonl))))))))
+      (while (re-search-forward
+              re
+              nil t 1)
+        (put-text-property
+         (or (match-beginning 3)
+             (match-beginning 2))
+         (or (match-end 3)
+             (match-end 2))
+         'font-lock-face 'font-lock-keyword-face)))))
 
 
 
