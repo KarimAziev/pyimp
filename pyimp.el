@@ -1083,15 +1083,15 @@ Argument PROJECT-DIR is the directory path where Python files are searched."
                           (imported-capture
                            (cond ((setq alias-imp (assoc-string
                                                    str aliased-imports))
-                                  (format "imported as %s" (cdr alias-imp)))
+                                  (format "Imported as %s" (cdr alias-imp)))
                                  ((setq imported-syms
                                         (assoc-string str imports-from))
-                                  (format "imported %d symbols"
+                                  (format "Imported %d symbols"
                                           (length
                                            (cdr
                                             imported-syms))))
                                  ((assoc-string str module-imports)
-                                  (format "imported")))))
+                                  (format "Imported")))))
                      (format annotfmt (string-join
                                        (delq nil
                                              (list type
@@ -1447,7 +1447,9 @@ of exports without using the cache."
                (imports-from (pyimp--extract-import-from-statements))
                (imported-syms (cdr (assoc-string module imports-from)))
                (annotfmt (pyimp--make-annotfmt choices))
-               (helpstr (pyimp--help-string-for-mark-command))
+               (helpstr
+                (substitute-command-keys
+                 "(mark multiple: \\<pyimp-multiple-symbols-minibuffer-map>`\\[pyimp-minibuffer-mark]')"))
                (preselect (pyimp--preselect-at-point choices imported-syms))
                (setup-fn
                 (pyimp--setup-minibuffer-syms-fn
@@ -1527,17 +1529,6 @@ map."
                              (current-local-map))))
     (setq pyimp--current-module-to-import module)))
 
-(defun pyimp--help-string-for-mark-command ()
-  "Format a help string indicating how to import multiple symbols."
-  (let* ((key (where-is-internal
-               #'pyimp-minibuffer-mark
-               pyimp-multiple-symbols-minibuffer-map
-               t
-               t
-               t))
-         (key-descr (if key (key-description key) "M-x pyimp-minibuffer-mark")))
-    (format " (to import multiple symbols use %s) " key-descr)))
-
 (defun pyimp--make-symbols-annotation-fn (annotfmt imported-syms
                                                    reimported-aliased reimports
                                                    reimported-syms &optional
@@ -1563,10 +1554,10 @@ Optional argument MARKED-SYMS is a list of symbols marked for import."
     (let* ((cell (assoc-string str imported-syms))
            (imported-capture
             (cond ((member str marked-syms)
-                   "(will be imported)")
+                   "Will be imported")
                   ((cdr cell)
-                   (format "imported as %s" (cdr cell)))
-                  (cell (format "imported"))))
+                   (format "Imported as %s" (cdr cell)))
+                  (cell (format "Imported"))))
            (reimported-sym)
            (reimport-capture
             (cond ((rassoc str reimported-aliased)
@@ -1575,7 +1566,7 @@ Optional argument MARKED-SYMS is a list of symbols marked for import."
                             (rassoc str
                                     reimported-aliased))))
                   ((assoc str reimports)
-                   "(reimport)")
+                   "(reimported)")
                   ((setq reimported-sym (seq-find
                                          (pcase-lambda (`(,_mod . ,items))
                                            (or (rassoc str items)
@@ -1584,10 +1575,10 @@ Optional argument MARKED-SYMS is a list of symbols marked for import."
                    (pcase-let ((`(,mod . ,items)
                                 reimported-sym))
                      (if (rassoc str items)
-                         (format "(reimport of %s from %s)"
+                         (format "(reimported as %s from %s)"
                                  (car (rassoc str items))
                                  mod)
-                       (format "(reimport from %s)"
+                       (format "(reimported from %s)"
                                mod)))))))
       (format annotfmt (string-join
                         (delq nil
