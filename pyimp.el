@@ -1255,6 +1255,18 @@ Optional argument FILENAME is the file path of the MODULE, used if provided."
                 (pyimp--extract-aliased-imports)
                 (pyimp--extract-imports-statements)))))))
 
+(defun pyimp--symbolp-imported-p (symb)
+  "Check if a symbol SYMB is imported in the current buffer.
+
+Argument SYMB is the symbol to check if it is imported."
+  (when buffer-file-name
+    (or (assoc-string symb (pyimp--extract-imports-statements))
+        (rassoc symb (pyimp--extract-aliased-imports))
+        (let ((import-from (pyimp--extract-import-from-statements)))
+          (seq-find (pcase-lambda (`(,_ . ,alist))
+                      (assoc-string symb alist))
+                    import-from)))))
+
 (defun pyimp--extract-import-from-statements (&optional root-node)
   "Extract imports of form \"from MODULE import SYM\" from a syntax tree.
 
@@ -1352,7 +1364,7 @@ Argument COMPLETIONS is a list of strings representing possible completions."
                                      (list 40))))))
    " %s"))
 
-(defun pyimp--preselect-at-point (choices imported-syms)
+(defun pyimp--preselect-at-point (choices)
   "Return symbol at point if in CHOICES and not in IMPORTED-SYMS.
 
 Argument CHOICES is a list of symbols available for selection.
@@ -1361,7 +1373,7 @@ Argument IMPORTED-SYMS is a list of symbols that have already been imported."
   (when-let* ((symb (symbol-at-point))
               (symb (format "%s" symb)))
     (when (and (member symb choices)
-               (not (member symb imported-syms)))
+               (not (pyimp--symbolp-imported-p symb)))
       symb)))
 
 
@@ -1391,7 +1403,7 @@ of exports without using the cache."
                                            reimported-aliased
                                            reimports
                                            reimported-syms))
-       (preselect (pyimp--preselect-at-point syms imported-syms)))
+       (preselect (pyimp--preselect-at-point syms)))
     (unwind-protect
         (minibuffer-with-setup-hook
             (pyimp--setup-minibuffer-syms-fn module)
@@ -1450,7 +1462,7 @@ of exports without using the cache."
                (helpstr
                 (substitute-command-keys
                  "(mark multiple: \\<pyimp-multiple-symbols-minibuffer-map>`\\[pyimp-minibuffer-mark]')"))
-               (preselect (pyimp--preselect-at-point choices imported-syms))
+               (preselect (pyimp--preselect-at-point choices))
                (setup-fn
                 (pyimp--setup-minibuffer-syms-fn
                  module
