@@ -1061,7 +1061,7 @@ Argument PROJECT-DIR is the directory path where Python files are searched."
          (all-modules (mapcar #'car all-modules-alist))
          (longest (apply #'max (or (mapcar #'length all-modules)
                                    (list 1))))
-         (root (treesit-buffer-root-node 'python))
+         (root (pyimp--treesit-buffer-root-node))
          (imports-from (pyimp--extract-import-from-statements root))
          (module-imports (pyimp--extract-imports-statements root))
          (aliased-imports (pyimp--extract-aliased-imports root))
@@ -1107,7 +1107,7 @@ Argument PROJECT-DIR is the directory path where Python files are searched."
 
 (defun pyimp--extract-exposed-exports ()
   "Return string literals from `__all__' assignment in current buffer."
-  (when-let* ((root (treesit-buffer-root-node 'python))
+  (when-let* ((root (pyimp--treesit-buffer-root-node))
               (candidates (treesit-query-capture
                            root
                            '((expression_statement
@@ -1149,7 +1149,7 @@ Argument PROJECT-DIR is the directory path where Python files are searched."
 (defun pyimp--get-top-parent-node (node)
   "Return top-level parent node for NODE."
   (let ((top-level-children (treesit-node-children
-                             (treesit-buffer-root-node 'python))))
+                             (pyimp--treesit-buffer-root-node))))
     (seq-find  (lambda (top-child)
                  (delq nil
                        (flatten-list
@@ -1177,7 +1177,7 @@ from."
 
 (defun pyimp--extract-non-imports-nodes ()
   "Filter out import and certain string nodes from the root node's children."
-  (let ((items (treesit-node-children (treesit-buffer-root-node 'python))))
+  (let ((items (treesit-node-children (pyimp--treesit-buffer-root-node))))
     (seq-remove
      (lambda (node)
        (let ((node-type (treesit-node-type node)))
@@ -1267,6 +1267,14 @@ Argument SYMB is the symbol to check if it is imported."
                       (assoc-string symb alist))
                     import-from)))))
 
+(defun pyimp--treesit-buffer-root-node ()
+  "Return the root node of a Python parse tree in the current buffer."
+  (condition-case nil
+      (treesit-buffer-root-node 'python)
+    (treesit-no-parser
+     (treesit-parser-create 'python)
+     (treesit-buffer-root-node 'python))))
+
 (defun pyimp--extract-import-from-statements (&optional root-node)
   "Extract imports of form \"from MODULE import SYM\" from a syntax tree.
 
@@ -1276,35 +1284,36 @@ query; if not provided, the root node of the current buffer is used.
 Result is alist of modules and imported symbols.
 
 Symbols is also a list of the imported symbols and possibly the aliased name."
-  (let ((statements (treesit-query-capture
-                     (or root-node (treesit-buffer-root-node 'python))
-                     '((import_from_statement
-                        module_name: (dotted_name) @module)))))
-    (mapcar (pcase-lambda (`(,_ . ,module))
-              (let ((syms)
-                    (node module))
-                (while (setq node (treesit-node-next-sibling node t))
-                  (when-let* ((item
-                               (pcase (treesit-node-type node)
-                                 ("aliased_import"
-                                  (let ((id)
-                                        (dotted-name))
-                                    (dolist (n (treesit-node-children node t))
-                                      (pcase (treesit-node-type n)
-                                        ("dotted_name"
-                                         (setq dotted-name
-                                               (treesit-node-text n t)))
-                                        ("identifier"
-                                         (setq id (treesit-node-text n t)))))
-                                    (when (and id dotted-name)
-                                      (cons dotted-name id))))
-                                 ("dotted_name"
-                                  (let ((text (treesit-node-text node t)))
-                                    (cons text nil))))))
-                    (push item syms)))
-                (cons (treesit-node-text module t)
-                      (nreverse syms))))
-            statements)))
+
+(let ((statements (treesit-query-capture
+                   (or root-node (pyimp--treesit-buffer-root-node))
+                   '((import_from_statement
+                      module_name: (dotted_name) @module)))))
+  (mapcar (pcase-lambda (`(,_ . ,module))
+            (let ((syms)
+                  (node module))
+              (while (setq node (treesit-node-next-sibling node t))
+                (when-let* ((item
+                             (pcase (treesit-node-type node)
+                               ("aliased_import"
+                                (let ((id)
+                                      (dotted-name))
+                                  (dolist (n (treesit-node-children node t))
+                                    (pcase (treesit-node-type n)
+                                      ("dotted_name"
+                                       (setq dotted-name
+                                             (treesit-node-text n t)))
+                                      ("identifier"
+                                       (setq id (treesit-node-text n t)))))
+                                  (when (and id dotted-name)
+                                    (cons dotted-name id))))
+                               ("dotted_name"
+                                (let ((text (treesit-node-text node t)))
+                                  (cons text nil))))))
+                  (push item syms)))
+              (cons (treesit-node-text module t)
+                    (nreverse syms))))
+          statements)))
 
 (defun pyimp--extract-aliased-imports (&optional root-node)
   "Extract imports of form \"import MODULE as ALIAS\" from a syntax tree.
@@ -1317,7 +1326,7 @@ Result is alist of modules and aliases."
                   (treesit-node-text (cdr (assq 'alias-name it)) t)))
           (seq-split (treesit-query-capture
                       (or root-node
-                          (treesit-buffer-root-node 'python))
+                          (pyimp--treesit-buffer-root-node))
                       '((import_statement
                          name: (aliased_import name:
                                 (dotted_name)
@@ -1607,7 +1616,7 @@ Optional argument MARKED-SYMS is a list of symbols marked for import."
 Argument MODULE is the name of the module to import.
 
 Optional argument SYM is the specific symbol to import from the module."
-  (let* ((items (treesit-node-children (treesit-buffer-root-node 'python)))
+  (let* ((items (treesit-node-children (pyimp--treesit-buffer-root-node)))
          (results (delq nil (mapcar
                              (lambda (it)
                                (let ((type (treesit-node-type it)))
