@@ -94,6 +94,18 @@ See `pyimp-multiple-symbols-minibuffer-map'."
   :group 'pyimp
   :type 'boolean)
 
+(defcustom pyimp-exclude-patterns-file-patterns '("\\.venv\\'"
+                                                  "__editable__")
+  "List of regex patterns used to exclude files from project search.
+
+A list of regular expressions used to exclude certain files when
+searching for Python files in a project directory. Each element
+in the list should be a string representing a regular expression
+pattern. Files matching any of these patterns will be excluded
+from the search results."
+  :group 'pyimp
+  :type '(repeat (regexp)))
+
 
 (defcustom pyimp-debug nil
   "Whether to allow debug logging.
@@ -1021,9 +1033,14 @@ Argument PROJECT-DIR is the directory path where Python files are searched."
            "\\.py\\'"
            nil
            (lambda (it)
-             (or (not pyvenv-virtual-env)
-                 (not
-                  (file-equal-p it pyvenv-virtual-env))))))
+             (and (or (not pyvenv-virtual-env)
+                      (not
+                       (file-equal-p it pyvenv-virtual-env)))
+                  (or (not pyimp-exclude-patterns-file-patterns)
+                      (not (seq-some
+                            (lambda (re)
+                              (string-match-p re it))
+                            pyimp-exclude-patterns-file-patterns)))))))
          (sorted-files
           (if (>= (length files) pyimp-files-sorting-threshold)
               files
