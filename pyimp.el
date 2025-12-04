@@ -1707,15 +1707,58 @@ Optional argument SYM is the specific symbol to import from the module."
            (let ((names (cdr item)))
              (if (member sym (mapcar #'treesit-node-text names))
                  (message "%s already imported" sym)
-               (let ((last-node (car (last names))))
-                 (when (equal (treesit-node-type last-node) ")")
+               (let ((last-node (car (last names)))
+                     (first-node (car names))
+                     (multi-line-imp))
+                 (when (and (equal (treesit-node-type last-node) ")")
+                            (equal (treesit-node-type first-node) "("))
+                   (let ((parens-start-line
+                          (line-number-at-pos (treesit-node-start
+                                               first-node)))
+                         (parents-end-line
+                          (line-number-at-pos (treesit-node-start
+                                               last-node))))
+                     (setq multi-line-imp
+                           (not (= parens-start-line parents-end-line))))
                    (let ((dropped (butlast names 1)))
                      (setq last-node (car (last dropped)))))
                  (goto-char (treesit-node-end last-node))
-                 (if (equal  ","
-                             (treesit-node-text last-node))
-                     (insert (concat "\s" sym))
-                   (insert ", " sym)))))))))
+                 (let* ((last-item (seq-find
+                                    (lambda (it)
+                                      (let ((type (treesit-node-type
+                                                   it)))
+                                        (member type
+                                                '("dotted_name"
+                                                  "aliased_import"))))
+                                    names))
+                        (multiline-indent
+                         (when (and multi-line-imp last-item)
+                           (save-excursion
+                             (goto-char (treesit-node-start
+                                         last-item))
+                             (current-column))))
+                        (last-item-has-comma (equal  "," (treesit-node-text
+                                                          last-node))))
+                   (goto-char (treesit-node-end last-node))
+                   (insert (concat
+                            (cond ((and multiline-indent
+                                        last-item-has-comma)
+                                   "\n")
+                                  ((and multiline-indent
+                                        (not last-item-has-comma))
+                                   ",\n")
+                                  ((and (not multiline-indent)
+                                        (not last-item-has-comma))
+                                   ", ")
+                                  ((and (not multiline-indent)
+                                        last-item-has-comma)
+                                   " "))
+                            (when multiline-indent
+                              (make-string multiline-indent ?\ ))
+                            sym
+                            (when (or multi-line-imp last-item-has-comma)
+                              ",")))))))))))
+
 
 (defvar pyimp-minibuffer-module-history
   nil)
