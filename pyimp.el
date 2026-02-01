@@ -6,7 +6,7 @@
 ;; URL: https://github.com/KarimAziev/pyimp
 ;; Version: 0.2.0
 ;; Keywords: languages
-;; Package-Requires: ((emacs "29.1") (pyvenv "1.21"))
+;; Package-Requires: ((emacs "29.1") (pyvenv "1.21") (project "0.11.1"))
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is NOT part of GNU Emacs.
