@@ -107,6 +107,23 @@ from the search results."
   :type '(repeat (regexp)))
 
 
+(defcustom pyimp-env nil
+  "Alist mapping environment variable names to their string values.
+
+Alist of environment variables to set when running project commands.
+
+Each element is a cons cell (NAME . VALUE), where NAME is a string
+naming the environment variable and VALUE is its string value.
+
+When NAME is \"PATH\", the value is also used to build variable `exec-path'."
+  :group 'pyimp
+  :type '(alist
+          :key-type
+          (string :tag "Variable name")
+          :value-type
+          (string :tag "Value")))
+
+
 (defcustom pyimp-debug nil
   "Whether to allow debug logging.
 
@@ -161,16 +178,19 @@ print(emacs_lisp_readable_str)
   "Script to list import statements in Python code.")
 
 (defconst pyimp--describe-module-code "\
+import pydoc
 import %s
 
-print(help(%s))
+print(pydoc.render_doc(%s))
 "
   "Script to describe Python module.")
 
 (defconst pyimp--describe-module-symbol-code "\
-from %s import %s
+import pydoc
+import %s
 
-print(help(%s))
+obj = getattr(%s, %S)
+print(pydoc.render_doc(obj, renderer=pydoc.plaintext))
 "
   "Script to describe Python module's symbol.")
 
@@ -199,6 +219,26 @@ if spec is not None:
 (defvar pyimp-whole-module-indicator "*whole module*")
 
 (defvar-local pyimp--current-module-to-import nil)
+
+
+
+
+(defmacro pyimp--with-env-vars (&rest body)
+  "Evaluate BODY with a environment merged with `pyimp-env'.
+
+Remaining arguments BODY are forms evaluated after setting environment
+variables, default is nil."
+  (declare
+   (indent defun))
+  `(let ((process-environment (copy-sequence process-environment))
+         (exec-p (copy-sequence exec-path)))
+    (pcase-dolist (`(,var . ,value) pyimp-env)
+     (setenv var value)
+     (when (string-equal "PATH" var)
+      (setq exec-p (append (parse-colon-path value)
+                    (list exec-directory)))))
+    (let ((exec-path (or exec-p exec-path)))
+     ,@body)))
 
 
 (defun pyimp--file-modification-time (file)
@@ -265,18 +305,19 @@ name."
                "python3")))
     (unless (file-name-absolute-p cmd)
       (setq cmd (executable-find cmd)))
-    (with-temp-buffer
-      (let ((status (call-process
-                     cmd nil t nil
-                     "-c" (format pyimp--module-to-file-name-code
-                                  (prin1-to-string
-                                   module))))
-            (file))
-        (when (zerop status)
-          (setq file (string-trim-right (buffer-string)))
-          (when (and file (file-name-absolute-p file)
-                     (file-exists-p file))
-            file))))))
+    (pyimp--with-env-vars
+      (with-temp-buffer
+        (let ((status (call-process
+                       cmd nil t nil
+                       "-c" (format pyimp--module-to-file-name-code
+                                    (prin1-to-string
+                                     module))))
+              (file))
+          (when (zerop status)
+            (setq file (string-trim-right (buffer-string)))
+            (when (and file (file-name-absolute-p file)
+                       (file-exists-p file))
+              file)))))))
 
 (defun pyimp--list-builtin-modules ()
   "Return a list of all installed and built-in Python modules."
@@ -289,17 +330,18 @@ Argument CODE is the Python code to be executed as a string."
   (let ((cmd (if (bound-and-true-p python-interpreter)
                  python-interpreter
                (executable-find "python3"))))
-    (with-temp-buffer
-      (let ((status (call-process
-                     cmd nil t nil
-                     "-c" code)))
-        (if (zerop status)
-            (progn (goto-char (point-max))
-                   (skip-chars-backward "\s\t\n")
-                   (backward-sexp)
-                   (ignore-errors (read (current-buffer))))
-          (message "Pyimp: An error occured: %s" (buffer-string))
-          nil)))))
+    (pyimp--with-env-vars
+      (with-temp-buffer
+        (let ((status (call-process
+                       cmd nil t nil
+                       "-c" code)))
+          (if (zerop status)
+              (progn (goto-char (point-max))
+                     (skip-chars-backward "\s\t\n")
+                     (backward-sexp)
+                     (ignore-errors (read (current-buffer))))
+            (message "Pyimp: An error occured: %s" (buffer-string))
+            nil))))))
 
 (defun pyimp--minibuffer-get-metadata ()
   "Return current minibuffer completion metadata."
@@ -575,7 +617,11 @@ buffer."
    (pyimp--module-and-symbol-for-help))
   (require 'ansi-color)
   (let* ((mini-wind (minibuffer-selected-window))
-         (buff-name (concat "*pyimp-help*"))
+         (pyimp-env (if (and mini-wind)
+                        (with-selected-window mini-wind
+                          pyimp-env)
+                      pyimp-env))
+         (buff-name "*pyimp-help*")
          (buff (progn
                  (when (get-buffer buff-name)
                    (kill-buffer buff-name))
@@ -1762,6 +1808,7 @@ Optional argument SYM is the specific symbol to import from the module."
 
 (defvar pyimp-minibuffer-module-history
   nil)
+
 
 ;;;###autoload
 (defun pyimp-import (module symb)
