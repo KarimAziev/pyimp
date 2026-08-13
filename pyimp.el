@@ -48,7 +48,15 @@
 
 (require 'project)
 (require 'pyvenv)
+(require 'seq)
+(require 'subr-x)
 (require 'treesit)
+
+
+(defgroup pyimp nil
+  "Insert and manage Python import statements."
+  :group 'languages
+  :prefix "pyimp-")
 
 
 (defcustom pyimp-files-sorting-threshold 5000
@@ -105,6 +113,20 @@ pattern. Files matching any of these patterns will be excluded
 from the search results."
   :group 'pyimp
   :type '(repeat (regexp)))
+
+
+(defcustom pyimp-project-import-roots nil
+  "Additional Python import roots within a project.
+
+Relative directory names are resolved from the Emacs project root.
+Absolute directory names are used as written.  Pyimp also detects the import
+root of the current buffer and a conventional `src' directory automatically.
+
+This option is useful for monorepos and projects with more than one source
+tree.  A file is resolved relative to the most specific import root that
+contains it."
+  :group 'pyimp
+  :type '(repeat directory))
 
 
 (defcustom pyimp-env nil
@@ -249,17 +271,20 @@ Argument FILE is the path to the file whose modification time is needed."
 
 (defvar pyimp-builtins-cached nil)
 
-(defun pyimp--locate-project-root ()
-  "Return the project root directory by locating the nearest `__init__.py' file."
-  (let ((dir default-directory)
-        (res))
-    (while
-        (when-let* ((last-dir (locate-dominating-file dir
-                                                     "__init__.py")))
-          (setq res dir))
-      (setq dir (file-name-parent-directory dir)))
-    (when res
-      (file-name-parent-directory res))))
+(defun pyimp--locate-import-root ()
+  "Return the import root inferred from surrounding `__init__.py' files."
+  (let ((directory default-directory)
+        package-directory)
+    (while (when-let* ((found (locate-dominating-file
+                               directory "__init__.py")))
+             (setq package-directory found)
+             (let ((parent (file-name-parent-directory found)))
+               (unless (file-equal-p found parent)
+                 (setq directory parent)))))
+    (when package-directory
+      (file-name-parent-directory package-directory))))
+
+(defalias 'pyimp--locate-project-root #'pyimp--locate-import-root)
 
 
 (defun pyimp-eval-python-to-extract-symbols-from-module (module)
@@ -543,7 +568,7 @@ Argument MODULE is the name of the Python module to describe."
               (pyimp--minibuffer-get-current-candidate)))
           current)
       (let ((default-directory (or
-                                (pyimp--locate-project-root)
+                                (pyimp--locate-import-root)
                                 default-directory)))
         (pyimp--completing-read-with-preview "Module: "
                                              (pyimp--get-modules)
@@ -580,7 +605,7 @@ requested."
                         (pyimp--minibuffer-get-current-candidate)))
                     current))
             (let* ((default-directory (or
-                                       (pyimp--locate-project-root)
+                                       (pyimp--locate-import-root)
                                        default-directory)))
               (pyimp--completing-read-with-preview
                "Module: "
@@ -594,7 +619,7 @@ requested."
                     (pyimp--minibuffer-get-current-candidate)))
                 current)
             (let ((default-directory (or
-                                      (pyimp--locate-project-root)
+                                      (pyimp--locate-import-root)
                                       default-directory)))
               (pyimp--completing-read-symbol module)))))
     (list module (if (equal symbol pyimp-whole-module-indicator)
@@ -632,7 +657,7 @@ buffer."
             (format pyimp--describe-module-symbol-code module symbol symbol)))
          (proc
           (let ((default-directory (or
-                                    (pyimp--locate-project-root)
+                                    (pyimp--locate-import-root)
                                     default-directory)))
             (start-process buff-name buff "python" "-c" code))))
     (with-current-buffer buff
@@ -900,45 +925,8 @@ INHERIT-INPUT-METHOD."
 
 
 (defun pyimp--get-modules ()
-  "Return a list of Python modules in the project."
-  (let* ((project
-          (or
-           (pyimp--locate-project-root)
-           default-directory))
-         (files
-          (directory-files-recursively
-           project
-           "\\.py\\'"
-           nil
-           (lambda (it)
-             (or (not pyvenv-virtual-env)
-                 (not
-                  (file-equal-p it pyvenv-virtual-env))))))
-         (sorted-files
-          (mapcar (lambda (file)
-                    (replace-regexp-in-string
-                     "/"
-                     "."
-                     (if (and pyvenv-virtual-env
-                              (file-in-directory-p file pyvenv-virtual-env))
-                         (car (last (split-string file  "/site-packages/" t)))
-                       (substring-no-properties
-                        (expand-file-name (file-name-sans-extension
-                                           file))
-                        (length project)))))
-                  (remove buffer-file-name
-                          (sort files
-                                (lambda (a b)
-                                  (not
-                                   (time-less-p
-                                    (pyimp--file-modification-time
-                                     a)
-                                    (pyimp--file-modification-time
-                                     b))))))))
-         (builtins
-          (setq pyimp-builtins-cached (pyimp--list-builtin-modules)))
-         (all-modules (append sorted-files builtins)))
-    all-modules))
+  "Return a list of Python modules available to the current project."
+  (mapcar #'car (plist-get (pyimp--discover-modules) :all)))
 
 (defvar-local pyimp-modules nil)
 
@@ -981,18 +969,123 @@ Argument CONTENT is the content to be cached for the specified file."
 Argument FILE is the name of the file to be converted into a module path.
 
 Optional argument ABS-PREFIX is a prefix used when FILE is an absolute path."
-  (let ((module (if (and abs-prefix
-                         (file-name-absolute-p file))
-                    (substring-no-properties
-                     (expand-file-name
-                      (file-name-sans-extension
-                       file))
-                     (length
-                      (expand-file-name
-                       abs-prefix)))
-                  (file-name-sans-extension file))))
-    (replace-regexp-in-string "/" "." (replace-regexp-in-string
-                                       "^\\|/__init__\\'" "" module))))
+  (let* ((relative
+          (if (and abs-prefix (file-name-absolute-p file))
+              (file-relative-name (expand-file-name file)
+                                  (file-name-as-directory
+                                   (expand-file-name abs-prefix)))
+            file))
+         (without-extension (file-name-sans-extension relative))
+         (parts (split-string
+                 (replace-regexp-in-string "\\\\" "/" without-extension)
+                 "/" t)))
+    (when (equal (car (last parts)) "__init__")
+      (setq parts (butlast parts)))
+    (when (and parts (seq-every-p #'pyimp--python-identifier-p parts))
+      (string-join parts "."))))
+
+(defconst pyimp--python-keywords
+  '("False" "None" "True" "and" "as" "assert" "async" "await" "break"
+    "class" "continue" "def" "del" "elif" "else" "except" "finally"
+    "for" "from" "global" "if" "import" "in" "is" "lambda"
+    "nonlocal" "not" "or" "pass" "raise" "return" "try" "while"
+    "with" "yield")
+  "Reserved Python words that cannot occur in an import statement.")
+
+(defun pyimp--python-identifier-p (name)
+  "Return non-nil when NAME is safe as a Python identifier component."
+  (and (string-match-p "\\`[[:alpha:]_][[:alnum:]_]*\\'" name)
+       (not (member name pyimp--python-keywords))))
+
+(defun pyimp--sort-python-files (files)
+  "Sort FILES newest first, with file names as a stable tie-breaker.
+
+Do not sort when `pyimp-files-sorting-threshold' is non-nil and FILES contains
+more entries than that threshold."
+  (if (and pyimp-files-sorting-threshold
+           (> (length files) pyimp-files-sorting-threshold))
+      files
+    (sort files
+          (lambda (a b)
+            (let ((a-time (pyimp--file-modification-time a))
+                  (b-time (pyimp--file-modification-time b)))
+              (if (equal a-time b-time)
+                  (string-lessp a b)
+                (time-less-p b-time a-time)))))))
+
+(defun pyimp--excluded-project-path-p (path)
+  "Return non-nil when PATH matches a Pyimp project exclusion pattern."
+  (and pyimp-exclude-patterns-file-patterns
+       (seq-some (lambda (regexp)
+                   (string-match-p regexp path))
+                 pyimp-exclude-patterns-file-patterns)))
+
+(defun pyimp--current-import-root ()
+  "Return the Python import root inferred from the current buffer."
+  (let ((default-directory
+         (if buffer-file-name
+             (file-name-directory (expand-file-name buffer-file-name))
+           default-directory)))
+    (pyimp--locate-import-root)))
+
+(defun pyimp--project-import-roots (project-dir)
+  "Return Python import roots associated with PROJECT-DIR.
+
+The most specific roots are returned first."
+  (let* ((project-dir (file-name-as-directory (expand-file-name project-dir)))
+         (src-dir (expand-file-name "src" project-dir))
+         (configured
+          (mapcar (lambda (dir)
+                    (file-name-as-directory
+                     (expand-file-name dir project-dir)))
+                  pyimp-project-import-roots))
+         (roots (append (list (pyimp--current-import-root))
+                        configured
+                        (and (file-directory-p src-dir) (list src-dir))
+                        (list project-dir))))
+    (setq roots (delete-dups (delq nil roots)))
+    (sort roots (lambda (a b) (> (length a) (length b))))))
+
+(defun pyimp--import-root-for-file (file import-roots)
+  "Return the most specific root in IMPORT-ROOTS containing FILE."
+  (seq-find (lambda (root)
+              (file-in-directory-p file root))
+            import-roots))
+
+(defun pyimp--fallback-project-files (project-dir)
+  "Return Python files below PROJECT-DIR when no Emacs project is available."
+  (directory-files-recursively
+   project-dir
+   "\\.py\\'"
+   nil
+   (lambda (directory)
+     (and (or (not pyvenv-virtual-env)
+              (not (file-equal-p directory pyvenv-virtual-env)))
+          (not (pyimp--excluded-project-path-p directory))))))
+
+(defun pyimp--regular-package-files (import-roots)
+  "Return Python files in regular top-level packages under IMPORT-ROOTS.
+
+This supplements `project-files' with generated or otherwise ignored modules
+inside recognized packages without admitting arbitrary ignored trees such as
+build directories."
+  (let (result)
+    (dolist (root import-roots result)
+      (when (file-accessible-directory-p root)
+        (dolist (entry (directory-files
+                        root t directory-files-no-dot-files-regexp))
+          (when (and (file-directory-p entry)
+                     (file-exists-p (expand-file-name "__init__.py" entry))
+                     (not (pyimp--excluded-project-path-p entry)))
+            (setq result
+                  (nconc result
+                         (directory-files-recursively
+                          entry
+                          "\\.py\\'"
+                          nil
+                          (lambda (directory)
+                            (not (pyimp--excluded-project-path-p
+                                  directory))))))))))))
 
 (defun pyimp--get-site-packages (lib-dir &optional force)
   "Retrieve and cache Python module paths from a specified directory.
@@ -1019,13 +1112,12 @@ directory scan."
                                      (unless (and (string=
                                                    (file-name-base file)
                                                    "__init__")
-                                                  (equal  (file-name-extension
-                                                           file)
-                                                          "py"))
-                                       (let ((module-path
-                                              (pyimp--file-name-to-module-path
-                                               file
-                                               lib-dir)))
+                                                  (equal (file-name-extension
+                                                          file)
+                                                         "py"))
+                                       (when-let* ((module-path
+                                                    (pyimp--file-name-to-module-path
+                                                     file lib-dir)))
                                          (cons module-path file))))
                                    (directory-files-recursively
                                     abs-dir
@@ -1038,15 +1130,16 @@ directory scan."
                                         "__init__.py"
                                         subdirectory))))))))
                        (when files
-                         (setq files (push
-                                      (cons
-                                       (pyimp--file-name-to-module-path
-                                        abs-dir lib-dir)
-                                       abs-dir)
-                                      files))
+                         (when-let* ((module
+                                      (pyimp--file-name-to-module-path
+                                       abs-dir lib-dir)))
+                           (push (cons module abs-dir) files))
                          (setq result (nconc result files))))))
-                  ((and (equal (file-name-extension abs-dir) ".py"))
-                   (setq result (push abs-dir result))))))
+                  ((equal (file-name-extension abs-dir) "py")
+                   (when-let* ((module
+                                (pyimp--file-name-to-module-path
+                                 abs-dir lib-dir)))
+                     (push (cons module abs-dir) result))))))
         (pyimp--set-file-cache lib-dir result)
         result)))
 
@@ -1069,58 +1162,95 @@ directory scan."
                                         site-packages-dir))))))
       result)))
 
-(defun pyimp--project-files (project-dir)
-  "Return an alist of Python files in PROJECT-DIR, excluding virtual envs.
+(defun pyimp--project-files (project-dir &optional project import-roots)
+  "Return importable Python modules associated with PROJECT-DIR.
 
-Argument PROJECT-DIR is the directory path where Python files are searched."
-  (let* ((files
-          (directory-files-recursively
-           project-dir
-           "\\.py\\'"
-           nil
-           (lambda (it)
-             (and (or (not pyvenv-virtual-env)
-                      (not
-                       (file-equal-p it pyvenv-virtual-env)))
-                  (or (not pyimp-exclude-patterns-file-patterns)
-                      (not (seq-some
-                            (lambda (re)
-                              (string-match-p re it))
-                            pyimp-exclude-patterns-file-patterns)))))))
-         (sorted-files
-          (if (>= (length files) pyimp-files-sorting-threshold)
-              files
-            (sort files
-                  (lambda (a b)
-                    (not
-                     (time-less-p
-                      (pyimp--file-modification-time
-                       a)
-                      (pyimp--file-modification-time
-                       b)))))))
-         (alist (mapcar (lambda (file)
-                          (cons
-                           (pyimp--file-name-to-module-path
-                            file project-dir)
-                           file))
-                        (remove buffer-file-name
-                                sorted-files))))
-    alist))
+The result is an alist of module names and absolute file names.  When PROJECT
+is non-nil, obtain the inventory through `project-files', which honors the
+project backend's ignore rules.  IMPORT-ROOTS defaults to roots inferred by
+`pyimp--project-import-roots'."
+  (setq project-dir (file-name-as-directory (expand-file-name project-dir)))
+  (let* ((project (or project (project-current nil project-dir)))
+         (import-roots (or import-roots
+                           (pyimp--project-import-roots project-dir)))
+         (files
+          (if project
+              (append
+               (mapcar (lambda (file)
+                         (expand-file-name file project-dir))
+                       (project-files project))
+               (pyimp--regular-package-files import-roots))
+            (pyimp--fallback-project-files project-dir)))
+         (files (delete-dups files))
+         (files
+          (seq-filter
+           (lambda (file)
+             (and (equal (file-name-extension file) "py")
+                  (not (and buffer-file-name
+                            (file-equal-p file buffer-file-name)))
+                  (not (pyimp--excluded-project-path-p file))))
+           files))
+         (sorted-files (pyimp--sort-python-files files)))
+    (delq
+     nil
+     (mapcar
+      (lambda (file)
+        (when-let* ((import-root
+                     (pyimp--import-root-for-file file import-roots))
+                    (module
+                     (pyimp--file-name-to-module-path file import-root)))
+          (cons module file)))
+      sorted-files))))
+
+(defun pyimp--deduplicate-modules (modules &optional seen)
+  "Return MODULES without duplicate names.
+
+SEEN, when non-nil, is a hash table of module names that already have higher
+precedence.  Earlier entries in MODULES win."
+  (let ((seen (or seen (make-hash-table :test #'equal)))
+        result)
+    (dolist (module modules (nreverse result))
+      (when (and (stringp (car-safe module))
+                 (not (gethash (car module) seen)))
+        (puthash (car module) t seen)
+        (push module result)))))
+
+(defun pyimp--discover-modules ()
+  "Discover project, installed, and built-in Python modules.
+
+Return a plist with the keys `:project', `:installed', `:builtin', and `:all'.
+Duplicate names are removed in that precedence order."
+  (let* ((project (project-current nil))
+         (project-dir
+          (file-name-as-directory
+           (expand-file-name
+            (or (and project (project-root project))
+                (pyimp--current-import-root)
+                default-directory))))
+         (seen (make-hash-table :test #'equal))
+         (project-modules
+          (pyimp--deduplicate-modules
+           (pyimp--project-files project-dir project)
+           seen))
+         (installed
+          (pyimp--deduplicate-modules (pyimp--get-python-libs) seen))
+         (builtins
+          (pyimp--deduplicate-modules
+           (mapcar #'list (pyimp--list-builtin-modules))
+           seen)))
+    (setq pyimp-builtins-cached (mapcar #'car builtins))
+    (list :project project-modules
+          :installed installed
+          :builtin builtins
+          :all (append project-modules installed builtins))))
 
 (defun pyimp--modules-completions-table ()
   "Return a completion table for Python modules in the current project."
-  (let* ((project
-          (or
-           (pyimp--locate-project-root)
-           default-directory))
-         (alist (pyimp--project-files project))
-         (builtins
-          (setq pyimp-builtins-cached
-                (mapcar #'list
-                        (seq-remove (lambda (it) (assoc-string it alist))
-                                    (pyimp--list-builtin-modules)))))
-         (installed (pyimp--get-python-libs))
-         (all-modules-alist (append alist builtins installed))
+  (let* ((discovery (pyimp--discover-modules))
+         (alist (plist-get discovery :project))
+         (installed (plist-get discovery :installed))
+         (builtins (plist-get discovery :builtin))
+         (all-modules-alist (plist-get discovery :all))
          (all-modules (mapcar #'car all-modules-alist))
          (longest (apply #'max (or (mapcar #'length all-modules)
                                    (list 1))))
@@ -1819,7 +1949,7 @@ Argument MODULE is the name of the module to import.
 Argument SYMB is the symbol or list of symbols to import from the module."
   (interactive
    (let* ((default-directory (or
-                              (pyimp--locate-project-root)
+                              (pyimp--locate-import-root)
                               default-directory))
           (mod
            (pyimp--completing-read-with-preview
