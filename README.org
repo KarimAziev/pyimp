@@ -73,6 +73,13 @@ Invoke the command =pyimp-import= (for example via =M-x= or a bound key) to inse
 
 If you ever need to read module documentation or review what's been imported, you can use the provided module description functionality (bound under =C-j= by default).
 
+Project modules are discovered through Emacs's =project.el= integration.  This
+means version-control ignores such as =build/=, =dist/=, and virtual
+environments are respected, while new untracked source files remain available.
+Pyimp also recognizes ignored generated modules inside regular Python packages
+(directories containing =__init__.py=) without treating arbitrary ignored build
+trees as import roots.
+
 * Configuration and Customization
 
 =pyimp= provides several customizable variables. For instance:
@@ -101,3 +108,17 @@ If you ever need to read module documentation or review what's been imported, yo
 
 -  =pyimp-extract-module-export-functions=
    A hook variable that specifies functions used to extract exported symbols from a module.
+
+-  =pyimp-project-import-roots=
+   Adds Python import roots that cannot be inferred automatically.  Relative
+   directories are resolved from the Emacs project root; absolute directories
+   are used as written.  Pyimp automatically detects the current package root
+   and the conventional =src/= layout, so this option is mainly useful for
+   monorepos or projects with multiple source trees.
+
+   For example:
+
+#+begin_src elisp
+((python-ts-mode . ((pyimp-project-import-roots . ("backend/src"
+                                                    "shared/python")))))
+#+end_src
