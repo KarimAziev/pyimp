@@ -199,14 +199,37 @@
             (expand-file-name "bad-name.py" site-packages))))
       (let ((modules (pyimp--get-site-packages site-packages t)))
         (should (equal (cdr (assoc "standalone" modules)) top-level))
-        (should (file-equal-p (cdr (assoc "package" modules))
-                              (file-name-directory package-init)))
+        (should (file-equal-p (cdr (assoc "package" modules)) package-init))
         (should (equal (cdr (assoc "package.child" modules)) child))
         (should-not (assoc "package.__init__" modules))
         (should-not (seq-find
                      (lambda (candidate)
                        (equal (cdr candidate) invalid))
                      modules))))))
+
+(ert-deftest pyimp-module-source-file-normalizes-package-directories ()
+  (pyimp-tests--with-temp-directory root
+    (let* ((package-dir (expand-file-name "package" root))
+           (package-init
+            (pyimp-tests--write-file
+             (expand-file-name "__init__.py" package-dir)))
+           (namespace-dir (expand-file-name "namespace" root)))
+      (make-directory namespace-dir)
+      (should (equal (pyimp--module-source-file "package" package-dir)
+                     package-init))
+      (should-not
+       (pyimp--module-source-file "namespace" namespace-dir))
+      (cl-letf (((symbol-function 'pyimp--extract-import-from-statements)
+                 (lambda (&optional _root) nil))
+                ((symbol-function 'pyimp--extract-aliased-imports)
+                 (lambda (&optional _root) nil))
+                ((symbol-function 'pyimp--extract-imports-statements)
+                 (lambda (&optional _root) nil)))
+        ;; A directory-valued candidate from an older cache must not be passed
+        ;; to `insert-file-contents'.
+        (should (equal (pyimp--imported-nodes-in-module
+                        "package" package-dir)
+                       '(nil nil nil)))))))
 
 (ert-deftest pyimp-deduplicate-modules-preserves-source-precedence ()
   (let* ((seen (make-hash-table :test #'equal))

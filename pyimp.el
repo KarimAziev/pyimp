@@ -299,6 +299,20 @@ Argument MODULE is the name of the Python module from which to extract symbols."
   (run-hook-with-args-until-success 'pyimp-extract-module-export-functions
                                     module))
 
+(defun pyimp--module-source-file (module &optional filename)
+  "Return the readable source file for MODULE.
+
+FILENAME may name either a Python file or a regular package directory.  In the
+latter case, return its `__init__.py'.  Resolve MODULE through Python when
+FILENAME is nil."
+  (let ((path (or filename (pyimp--module-to-file-name module))))
+    (when (and (stringp path) (not (string-empty-p path)))
+      (cond ((file-regular-p path) path)
+            ((file-directory-p path)
+             (let ((init-file (expand-file-name "__init__.py" path)))
+               (when (file-regular-p init-file)
+                 init-file)))))))
+
 (defun pyimp-extract-module-exports-with-cache (module &optional filename force)
   "Retrieve MODULE exports, using cache if available, else extract anew.
 
@@ -311,8 +325,7 @@ provided.
 
 Optional argument FORCE is a boolean that, when non-nil, forces the extraction
 of exports without using the cache."
-  (unless filename
-    (setq filename (pyimp--module-to-file-name module)))
+  (setq filename (pyimp--module-source-file module filename))
   (if (not filename)
       (pyimp-extract-exports-from-module module)
     (or (and (not force)
@@ -1132,8 +1145,11 @@ directory scan."
                        (when files
                          (when-let* ((module
                                       (pyimp--file-name-to-module-path
-                                       abs-dir lib-dir)))
-                           (push (cons module abs-dir) files))
+                                       abs-dir lib-dir))
+                                     (init-file
+                                      (pyimp--module-source-file
+                                       module abs-dir)))
+                           (push (cons module init-file) files))
                          (setq result (nconc result files))))))
                   ((equal (file-name-extension abs-dir) "py")
                    (when-let* ((module
@@ -1434,8 +1450,7 @@ Argument MODULE is the name of the Python module to be processed."
 Argument MODULE is the name of the Python module to analyze.
 
 Optional argument FILENAME is the file path of the MODULE, used if provided."
-  (when-let* ((file (or filename
-                        (pyimp--module-to-file-name module))))
+  (when-let* ((file (pyimp--module-source-file module filename)))
     (let* ((buff (get-file-buffer file)))
       (if (buffer-live-p buff)
           (with-current-buffer buff
